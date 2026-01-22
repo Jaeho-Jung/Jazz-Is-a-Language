@@ -4,7 +4,7 @@ from typing import Dict
 import sqlite3
 import pandas as pd
 
-from .config import DB_PATH, OUTPUT_PKL, OUTPUT_CSV, GRID_PER_BEAT, GRID_PER_BAR, NOTE_NAMES
+from .config import DB_PATH, OUTPUT_PKL, OUTPUT_CSV, GRID_PER_BEAT, GRID_PER_BAR, NOTE_NAMES, NOTE_NAMES_SHARP, CHORD_QUALITY_MAP
 from .data_loader import WJD
 from .chord_parser import ChordParser
 from .utils import safe_int, safe_divide, clip_to_range
@@ -15,12 +15,15 @@ class Preprocessor:
         self.db_path = db_path
         self.chord_parser = ChordParser()
     
-    def process(self) -> pd.DataFrame:
+    def process(self, augment_keys: bool = True) -> pd.DataFrame:
         """
         Main preprocessing pipeline.
 
         Args:
-            db_path (str): Path to the database file
+            augment_keys: If True, augment dataset to 12 keys (-6 to +5 semitones)
+        
+        Returns:
+            pd.DataFrame: Processed dataset (12x larger if augmented)
         """
 
         db = WJD(self.db_path)
@@ -35,6 +38,12 @@ class Preprocessor:
             all_solos.append(solo_df)
             
         dataset = pd.concat(all_solos, ignore_index=True)
+        
+        # Step 3: Data augmentation (transpose to 12 keys)
+        if augment_keys:
+            print(f"Original dataset: {len(dataset)} rows")
+            dataset = self._augment_to_12_keys(dataset)
+            print(f"Augmented dataset: {len(dataset)} rows (12 keys)")
 
         return dataset
 
@@ -128,7 +137,7 @@ class Preprocessor:
         # Align chords to melody events
         idx_last_chord = 0
         for idx, row in solo_df.iterrows():
-            if row['chord'] != '':
+            if row['chord'] != '' and row['chord'] != 'NC':
                 idx_last_chord = idx
             solo_df.at[idx, 'chord'] = solo_df.at[idx_last_chord, 'chord']
             solo_df.at[idx, 'chord_root'] = solo_df.at[idx_last_chord, 'chord_root']
@@ -409,7 +418,146 @@ class Preprocessor:
         
         return solo_df
 
+    def _augment_to_12_keys(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Augment dataset by transposing to 12 keys.
         
+        Transposition range: -6 to +5 semitones
+        - This keeps pitch range natural (avoids extreme high/low transpositions)
+        - Original key has key_shift = 0
+        - Range: [-6, -5, -4, -3, -2, -1, 0, +1, +2, +3, +4, +5]
+        
+        Args:
+            df: Original dataset with key_shift = 0
+        
+        Returns:
+            Augmented dataset with 12x rows
+        """
+        augmented_dfs = []
+        
+        # Transpose to 12 keys: -6 to +5 semitones
+        for shift in range(-6, 6):  # -6, -5, ..., 0, ..., +4, +5
+            shifted_df = self._transpose_by_semitones(df.copy(), shift)
+            augmented_dfs.append(shifted_df)
+        
+        return pd.concat(augmented_dfs, ignore_index=True)
+    
+    def _transpose_by_semitones(self, df: pd.DataFrame, semitones: int) -> pd.DataFrame:
+        """
+        Transpose all pitch-related features by N semitones.
+        
+        Features to transpose:
+        - pitch: MIDI pitch number (add semitones)
+        - chord_root: Chord root (0-11, modulo 12)
+        - next_chord_root: Next chord root (0-11, modulo 12)
+        - key_center: Key center (0-11, modulo 12)
+        - key: Key signature string
+        - chord: Chord symbol string
+        - next_chord: Next chord symbol string
+        
+        Features to keep unchanged:
+        - chord_rel_pitch: Already relative to chord root
+        - prev_interval: Interval is invariant to transposition
+        - All rhythmic features (pos_grid, dur_grid, etc.)
+        - All metadata (performer, style, title, etc.)
+        
+        Args:
+            df: DataFrame to transpose
+            semitones: Number of semitones to shift (-6 to +5)
+        
+        Returns:
+            Transposed DataFrame with updated key_shift
+        """
+        df = df.copy()
+        
+        # Update key_shift column
+        df['key_shift'] = semitones
+        
+        if semitones == 0:
+            return df  # No transposition needed
+        
+        # Transpose pitch (only for rows with valid pitch)
+        if 'pitch' in df.columns:
+            pitch_mask = df['pitch'].notna()
+            df.loc[pitch_mask, 'pitch'] = df.loc[pitch_mask, 'pitch'] + semitones
+        
+        # Transpose chord roots (modulo 12)
+        for col in ['chord_root', 'next_chord_root', 'key_center']:
+            if col in df.columns:
+                valid_mask = df[col].notna()
+                df.loc[valid_mask, col] = (df.loc[valid_mask, col] + semitones) % 12
+        
+        # Update chord symbols
+        for col in ['chord', 'next_chord']:
+            if col in df.columns:
+                valid_mask = df[col].notna()
+                df.loc[valid_mask, col] = df.loc[valid_mask, col].apply(
+                    lambda c: self._transpose_chord_symbol(c, semitones)
+                )
+        
+        # Update key signature
+        if 'key' in df.columns:
+            df['key'] = df['key'].apply(
+                lambda k: self._transpose_key_signature(k, semitones) if pd.notna(k) else k
+            )
+        
+        return df
+    
+    def _transpose_chord_symbol(self, chord_symbol: str, semitones: int) -> str:
+        """
+        Transpose a chord symbol by N semitones.
+        
+        Examples:
+            'C7' + 2 semitones → 'D7'
+            'F-7' + 5 semitones → 'Bb-7'
+            'Eb7' - 3 semitones → 'C7'
+        
+        Args:
+            chord_symbol: Original chord symbol (e.g., 'C7', 'F-7')
+            semitones: Number of semitones to shift
+        
+        Returns:
+            Transposed chord symbol
+        """
+
+        root_idx, quality_idx = ChordParser.parse_chord(chord_symbol).values()
+        # Transpose root
+        new_root = (root_idx + semitones) % 12
+        
+        return NOTE_NAMES[new_root] + list(CHORD_QUALITY_MAP.values())[quality_idx][0]
+
+    def _transpose_key_signature(self, key_signature: str, semitones: int) -> str:
+        """
+        Transpose a key signature by N semitones.
+        
+        Args:
+            key_signature: Original key signature (e.g., 'C', 'F#')
+            semitones: Number of semitones to shift
+        
+        Returns:
+            Transposed key signature
+        """
+        if pd.isna(key_signature) or key_signature == '':
+            return key_signature
+        
+        # Find index of the key
+        note, quality = key_signature.split('-')
+        try:
+            if note in NOTE_NAMES:
+                idx = NOTE_NAMES.index(note)
+            elif note in NOTE_NAMES_SHARP:
+                idx = NOTE_NAMES_SHARP.index(note)
+            else:
+                # Handle invalid key signatures
+                return key_signature
+            
+            # Transpose and wrap around
+            new_idx = (idx + semitones) % 12
+            return NOTE_NAMES[new_idx] + '-' + quality
+        except ValueError:
+            # Should not happen if data is clean, but just in case
+            return key_signature
+            
 if __name__ == "__main__":
     # Check if Database exists
     if not Path(DB_PATH).exists():
@@ -427,4 +575,4 @@ if __name__ == "__main__":
     print(f"✅ Preprocessing complete!")
     print(f"   - Processed {len(processed_df)} rows")
     print(f"   - Saved to {OUTPUT_PKL}")
-    print(f"   - Saved to {OUTPUT_CSV}")
+    print(f"   - Saved to {OUTPUT_CSV}")    
