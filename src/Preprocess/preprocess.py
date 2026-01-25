@@ -4,9 +4,10 @@ from typing import Dict
 import sqlite3
 import pandas as pd
 
-from .config import DB_PATH, OUTPUT_PKL, OUTPUT_CSV, GRID_PER_BEAT, GRID_PER_BAR, NOTE_NAMES, NOTE_NAMES_SHARP, CHORD_QUALITY_MAP
+from .config import DB_PATH, OUTPUT_PKL, OUTPUT_CSV, GRID_PER_BEAT, GRID_PER_BAR, NOTE_NAMES, NOTE_NAMES_SHARP, CHORD_QUALITY_MAP, REST_CHORD_REL_PITCH
 from .data_loader import WJD
 from .chord_parser import ChordParser
+from .rest_processor import RestProcessor
 from .utils import safe_int, safe_divide, clip_to_range
 
 
@@ -14,6 +15,7 @@ class Preprocessor:
     def __init__(self, db_path):
         self.db_path = db_path
         self.chord_parser = ChordParser()
+        self.rest_processor = RestProcessor()
     
     def process(self, augment_keys: bool = True) -> pd.DataFrame:
         """
@@ -68,10 +70,13 @@ class Preprocessor:
         # Rhythmic features
         solo_df = self._add_rhythmic_features(solo_df)
         
+        # Process rests - compress consecutive rests and calculate timing
+        solo_df = self.rest_processor.process_rests(solo_df)
+        
         # Melodic features
         solo_df = self._add_melodic_features(solo_df)
         
-        # Harmonic features
+        # Harmonic features (sets chord_rel_pitch=12 for rests)
         solo_df = self._add_harmonic_features(solo_df)
         
         # Select final features
@@ -264,11 +269,15 @@ class Preprocessor:
         solo_df['key_shift'] = 0
 
         # Calculate chord-relative pitch
-        solo_df['chord_rel_pitch'] = solo_df.apply(
-            lambda row: (row['pitch'] - row['chord_root']) % 12 
-            if pd.notna(row['chord_root']) else 0,
-            axis=1
-        )
+        # For rests, use REST_CHORD_REL_PITCH (12)
+        def calc_chord_rel_pitch(row):
+            if row.get('is_rest', False):
+                return REST_CHORD_REL_PITCH  # 12 for rests
+            if pd.notna(row['pitch']) and pd.notna(row['chord_root']):
+                return int((row['pitch'] - row['chord_root']) % 12)
+            return REST_CHORD_REL_PITCH  # Default to rest encoding for missing data
+        
+        solo_df['chord_rel_pitch'] = solo_df.apply(calc_chord_rel_pitch, axis=1)
         
         return solo_df
 
@@ -336,8 +345,8 @@ class Preprocessor:
             pd.DataFrame: DataFrame with selected features
         """
         feature_cols = [
-            # Metadata
-            'eventid', 'melid', 'beatid',
+            # Metadata (removed eventid - duplicates during augmentation)
+            'melid', 'beatid',
             # Position info
             'bar', 'beat', 'chorus_id',
             # Raw features
@@ -350,6 +359,8 @@ class Preprocessor:
             'chord', 'chord_root', 'chord_quality',
             'next_chord', 'next_chord_root', 'next_chord_quality',
             'chord_rel_pitch', 'key_center', 'key_shift',
+            # Event type
+            'is_rest',
             # Context
             'key', 'avgtempo', 'performer', 'style', 'title', 'signature'
         ]

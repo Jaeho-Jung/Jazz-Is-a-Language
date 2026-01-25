@@ -49,3 +49,16 @@ CHORD_QUALITY_MAP = {
     'dom': ['7', '79b', '7913'],
     'half-dim': ['m7b5'],
 }
+
+# ============================================================================
+# REST ENCODING
+# ============================================================================
+
+# Special pitch value for rests (out of MIDI 0-127 range)
+REST_PITCH = -1
+
+# Special chord-relative pitch for rests (out of 0-11 chromatic range)
+REST_CHORD_REL_PITCH = 12
+
+# Special interval value for rests
+REST_INTERVAL = 0
