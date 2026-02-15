@@ -2,3 +2,18 @@ docs/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Data files
+*.pkl
+*.csv
+data.ipynb
+
+# Model checkpoints
+models/
+checkpoints/
+
+# Generated outputs
+output/
+
+# Agent config
+.agent/
