@@ -2,6 +2,7 @@
 Dataset for JazzTransformer (Decoder-Only) model.
 
 Returns unified 7-feature format matching RNN/LSTM interface.
+All data is preloaded into memory as numpy arrays for fast GPU training.
 """
 
 import torch
@@ -25,76 +26,97 @@ class JazzDataset(Dataset):
         # Filter by melids if provided (solo-level split to prevent data leakage)
         self.melids = melids
 
-        # Prepare sequences
-        self.sequences = []
-        self._prepare_sequences()
+        # Precompute all data as contiguous numpy arrays for fast __getitem__
+        self._precompute()
 
-    def _prepare_sequences(self):
-        # Group by melid to avoid crossing solo boundaries
+    def _precompute(self):
+        """Precompute all features as numpy arrays — eliminates DataFrame overhead in __getitem__."""
         grouped = self.df.groupby('melid')
-
-        self.solo_data = {}
-
+        
+        # Collect all sequences as indices into flat arrays
+        all_pitch = []
+        all_rel_pitch = []
+        all_dur = []
+        all_prev_int = []
+        all_chord_root = []
+        all_chord_quality = []
+        all_metric_pos = []
+        
+        sequences = []  # (offset_in_flat, length) for each solo
+        flat_offset = 0
+        
         for melid, group in grouped:
-            # Skip melids not in the provided set
             if self.melids is not None and melid not in self.melids:
                 continue
             
             group = group.reset_index(drop=True)
-            self.solo_data[melid] = group
-
-            num_events = len(group)
-            if num_events > self.seq_len:
-                for start_idx in range(num_events - self.seq_len):
-                    self.sequences.append((melid, start_idx))
+            n = len(group)
+            
+            if n <= self.seq_len:
+                continue
+            
+            # Convert entire solo to numpy arrays once
+            pitch = group['pitch'].fillna(128).astype(np.int64).values.copy()
+            rel_pitch = group['chord_rel_pitch'].fillna(12).astype(np.int64).values.copy()
+            dur = group['dur_grid'].apply(lambda x: self.dur_to_idx.get(x, 0)).values.astype(np.int64).copy()
+            prev_int = np.clip(group['prev_interval'].fillna(0).values + 12, 0, 24).astype(np.int64).copy()
+            chord_root = group['chord_root'].fillna(12).astype(np.int64).values.copy()
+            chord_quality = group['chord_quality'].fillna(6).astype(np.int64).values.copy()
+            metric_pos = group['pos_grid'].fillna(0).astype(np.int64).values.copy()
+            
+            all_pitch.append(pitch)
+            all_rel_pitch.append(rel_pitch)
+            all_dur.append(dur)
+            all_prev_int.append(prev_int)
+            all_chord_root.append(chord_root)
+            all_chord_quality.append(chord_quality)
+            all_metric_pos.append(metric_pos)
+            
+            # Record sequence indices
+            for start_idx in range(n - self.seq_len):
+                sequences.append((flat_offset + start_idx,))
+            
+            flat_offset += n
+        
+        # Concatenate into single contiguous arrays
+        self.pitch = np.concatenate(all_pitch)
+        self.rel_pitch = np.concatenate(all_rel_pitch)
+        self.dur = np.concatenate(all_dur)
+        self.prev_int = np.concatenate(all_prev_int)
+        self.chord_root = np.concatenate(all_chord_root)
+        self.chord_quality = np.concatenate(all_chord_quality)
+        self.metric_pos = np.concatenate(all_metric_pos)
+        
+        # Store sequence start indices as numpy array
+        self.seq_starts = np.array([s[0] for s in sequences], dtype=np.int64)
+        
+        # Free the DataFrame — no longer needed
+        del self.df
+        
+        print(f"Precomputed {len(self.seq_starts)} sequences from {len(all_pitch)} solos "
+              f"({len(self.pitch)} total events, {self.pitch.nbytes * 7 / 1024 / 1024:.0f} MB in memory)")
 
     def __len__(self):
-        return len(self.sequences)
+        return len(self.seq_starts)
 
     def __getitem__(self, idx):
-        melid, start_idx = self.sequences[idx]
-        solo_df = self.solo_data[melid]
-
-        # Get window input and target 
-        window_df = solo_df.iloc[start_idx : start_idx + self.seq_len]
-        target_row = solo_df.iloc[start_idx + self.seq_len]
-
-        # =================================================================
-        # UNIFIED 7 FEATURES (same as RNN/LSTM)
-        # =================================================================
-        pitch = window_df['pitch'].fillna(128).astype(int).values
-        rel_pitch = window_df['chord_rel_pitch'].fillna(12).astype(int).values
-        dur = window_df['dur_grid'].apply(lambda x: self.dur_to_idx.get(x, 0)).values
+        start = self.seq_starts[idx]
+        end = start + self.seq_len
         
-        prev_int = window_df['prev_interval'].fillna(0).values
-        prev_int_idx = np.clip(prev_int + 12, 0, 24).astype(int)
-        
-        chord_root = window_df['chord_root'].fillna(12).astype(int).values
-        chord_quality = window_df['chord_quality'].fillna(6).astype(int).values
-        metric_pos = window_df['pos_grid'].fillna(0).astype(int).values
-
+        # Slice precomputed arrays (fast numpy indexing, no DataFrame overhead)
         features = {
-            'pitch': torch.LongTensor(pitch),
-            'rel_pitch': torch.LongTensor(rel_pitch),
-            'duration': torch.LongTensor(dur),
-            'prev_interval': torch.LongTensor(prev_int_idx),
-            'chord_root': torch.LongTensor(chord_root),
-            'chord_quality': torch.LongTensor(chord_quality),
-            'metric_pos': torch.LongTensor(metric_pos),
+            'pitch': torch.from_numpy(self.pitch[start:end]),
+            'rel_pitch': torch.from_numpy(self.rel_pitch[start:end]),
+            'duration': torch.from_numpy(self.dur[start:end]),
+            'prev_interval': torch.from_numpy(self.prev_int[start:end]),
+            'chord_root': torch.from_numpy(self.chord_root[start:end]),
+            'chord_quality': torch.from_numpy(self.chord_quality[start:end]),
+            'metric_pos': torch.from_numpy(self.metric_pos[start:end]),
         }
 
-        # =================================================================
-        # TARGETS
-        # =================================================================
-        t_pitch_val = target_row['pitch']
-        target_pitch = 128 if pd.isna(t_pitch_val) else int(t_pitch_val)
-            
-        t_dur_val = target_row['dur_grid']
-        target_duration = self.dur_to_idx.get(t_dur_val, 0)
-        
         targets = {
-            'pitch': torch.tensor(target_pitch, dtype=torch.long),
-            'duration': torch.tensor(target_duration, dtype=torch.long),
+            'pitch': torch.tensor(self.pitch[end], dtype=torch.long),
+            'duration': torch.tensor(self.dur[end], dtype=torch.long),
         }
 
         return features, targets

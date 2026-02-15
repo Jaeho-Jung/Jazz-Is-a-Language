@@ -31,7 +31,7 @@ class Trainer:
         if self.use_amp:
             print("Mixed precision training (AMP) enabled")
 
-    def train(self, save_dir='models/transformer', resume_checkpoint=None, start_epoch=0):
+    def train(self, save_dir='models/transformer', resume_checkpoint=None, start_epoch=0, patience=5):
         os.makedirs(save_dir, exist_ok=True)
 
         if resume_checkpoint and os.path.exists(resume_checkpoint):
@@ -47,6 +47,8 @@ class Trainer:
             else:
                 self.model.load_state_dict(checkpoint)
         
+        epochs_without_improvement = 0
+
         for epoch in range(start_epoch, self.num_epochs):
             self.model.train()
             train_loss = 0
@@ -82,12 +84,19 @@ class Trainer:
             torch.save(checkpoint, save_path)
             print(f"Saved checkpoint: {save_path}")
 
-            # Save best model
+            # Save best model + early stopping
             if not hasattr(self, 'best_val_loss') or val_loss < self.best_val_loss:
                 self.best_val_loss = val_loss
                 best_path = os.path.join(save_dir, "best_model.pth")
                 torch.save(checkpoint, best_path)
                 print(f"Saved best model: {best_path}")
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+                print(f"No improvement for {epochs_without_improvement}/{patience} epochs")
+                if epochs_without_improvement >= patience:
+                    print(f"Early stopping triggered at epoch {epoch+1}. Best val loss: {self.best_val_loss:.4f}")
+                    break
 
     def _move_to_device(self, feature_dict):
         """Move all tensors in a dict to device."""

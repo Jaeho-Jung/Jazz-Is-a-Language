@@ -51,9 +51,9 @@ def main():
 
     # Create data loaders (num_workers + pin_memory for faster GPU loading)
     train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=True, 
-                              num_workers=2, pin_memory=True)
+                              num_workers=8, pin_memory=True, persistent_workers=True)
     val_loader = DataLoader(val_dataset, batch_size=config.BATCH_SIZE, shuffle=False,
-                            num_workers=2, pin_memory=True)
+                            num_workers=8, pin_memory=True, persistent_workers=True)
 
     print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
 
