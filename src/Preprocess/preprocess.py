@@ -249,6 +249,8 @@ class Preprocessor:
         """
         Add harmonic-related features to the solo data.
         - key center
+        - chord-relative root (root - key_center)
+        - next chord-relative root
         - chord-relative pitch
         - original key shift
 
@@ -267,6 +269,16 @@ class Preprocessor:
 
         # Add original key shift (0)
         solo_df['key_shift'] = 0
+
+        # Calculate key-relative chord roots
+        # (chord_root - key_center) % 12
+        def calc_root_rel_key(row, col_name):
+            if pd.notna(row[col_name]):
+                return int((row[col_name] - row['key_center']) % 12)
+            return pd.NA
+            
+        solo_df['chord_root_rel'] = solo_df.apply(lambda row: calc_root_rel_key(row, 'chord_root'), axis=1)
+        solo_df['next_chord_root_rel'] = solo_df.apply(lambda row: calc_root_rel_key(row, 'next_chord_root'), axis=1)
 
         # Calculate chord-relative pitch
         # For rests, use REST_CHORD_REL_PITCH (12)
@@ -356,8 +368,8 @@ class Preprocessor:
             # Derived melodic features
             'prev_interval',
             # Derived harmonic features
-            'chord', 'chord_root', 'chord_quality',
-            'next_chord', 'next_chord_root', 'next_chord_quality',
+            'chord', 'chord_root', 'chord_root_rel', 'chord_quality',
+            'next_chord', 'next_chord_root', 'next_chord_root_rel', 'next_chord_quality',
             'chord_rel_pitch', 'key_center', 'key_shift',
             # Event type
             'is_rest',
