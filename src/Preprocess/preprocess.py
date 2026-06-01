@@ -4,7 +4,7 @@ from typing import Dict
 import sqlite3
 import pandas as pd
 
-from .config import DB_PATH, OUTPUT_PKL, OUTPUT_CSV, GRID_PER_BEAT, GRID_PER_BAR, NOTE_NAMES, NOTE_NAMES_SHARP, CHORD_QUALITY_MAP, REST_CHORD_REL_PITCH
+from .config import DB_PATH, OUTPUT_PKL, OUTPUT_CSV, GRID_PER_BEAT, GRID_PER_BAR, NOTE_NAMES, NOTE_NAMES_SHARP, CHORD_QUALITY_MAP, REST_CHORD_REL_PITCH, MAX_NOTE_DURATION, REST_PITCH, REST_OCTAVE
 from .data_loader import WJD
 from .chord_parser import ChordParser
 from .rest_processor import RestProcessor
@@ -243,6 +243,11 @@ class Preprocessor:
         # Calculate interval from previous note
         solo_df['prev_interval'] = solo_df['pitch'].diff().fillna(0).astype(int)     
 
+        # Calculate octave (pitch // 12)
+        # Use REST_OCTAVE for rests/missing pitch
+        solo_df['octave'] = (solo_df['pitch'] // 12).astype(pd.Int64Dtype())
+        solo_df.loc[solo_df['pitch'].isna(), 'octave'] = REST_OCTAVE
+
         return solo_df
 
     def _add_harmonic_features(self, solo_df: pd.DataFrame) -> pd.DataFrame:
@@ -341,8 +346,8 @@ class Preprocessor:
         # Convert to grid units
         dur_grid = round(safe_divide(duration_sec, beatdur_sec, 1.0) * GRID_PER_BEAT)
         
-        # Clip to valid range (minimum 1, maximum 48)
-        dur_grid = int(clip_to_range(dur_grid, 1, GRID_PER_BAR))
+        # Clip to valid range (minimum 1, maximum MAX_NOTE_DURATION)
+        dur_grid = int(clip_to_range(dur_grid, 1, MAX_NOTE_DURATION))
         
         return dur_grid
     
@@ -366,7 +371,7 @@ class Preprocessor:
             # Derived rhythmic features
             'pos_grid', 'dur_grid',
             # Derived melodic features
-            'prev_interval',
+            'prev_interval', 'octave',
             # Derived harmonic features
             'chord', 'chord_root', 'chord_root_rel', 'chord_quality',
             'next_chord', 'next_chord_root', 'next_chord_root_rel', 'next_chord_quality',
@@ -404,13 +409,17 @@ class Preprocessor:
             'bar', 'beat', 'chorus_id',             # Position info
             'pitch',                                 # MIDI pitch (can be NA for rests)
             'pos_grid', 'dur_grid',                 # Rhythmic grid values
-            'prev_interval',                         # Melodic interval
+            'prev_interval', 'octave',               # Melodic features
             'chord_root', 'chord_quality',          # Chord info
             'next_chord_root', 'next_chord_quality', # Next chord info
             'chord_rel_pitch',                       # Harmonic features
             'key_center', 'key_shift'               # Key info
         ]
         
+        # Fill NA pitch with REST_PITCH
+        if 'pitch' in solo_df.columns:
+            solo_df['pitch'] = solo_df['pitch'].fillna(REST_PITCH)
+
         for col in int_cols:
             if col in solo_df.columns:
                 solo_df[col] = solo_df[col].astype(pd.Int64Dtype())
@@ -499,10 +508,24 @@ class Preprocessor:
         if semitones == 0:
             return df  # No transposition needed
         
-        # Transpose pitch (only for rows with valid pitch)
+        # Transpose pitch (only for rows with valid pitch AND not equal to REST_PITCH)
         if 'pitch' in df.columns:
-            pitch_mask = df['pitch'].notna()
+            # We treat REST_PITCH as a valid integer now (128), so notna() might be true.
+            # We must explicitly exclude REST_PITCH
+            pitch_mask = (df['pitch'].notna()) & (df['pitch'] != REST_PITCH)
+            
             df.loc[pitch_mask, 'pitch'] = df.loc[pitch_mask, 'pitch'] + semitones
+
+            # Transpose/Update octave
+            # Since pitch changed, octave might change
+            if 'octave' in df.columns:
+                 # Only update octave for non-rest notes
+                 df.loc[pitch_mask, 'octave'] = (df.loc[pitch_mask, 'pitch'] // 12).astype(pd.Int64Dtype())
+                 
+                 # Ensure rests stay at REST_OCTAVE (should be redundant if we didn't touch them, but safe)
+                 rest_mask = (df['pitch'] == REST_PITCH) | (df['pitch'].isna())
+                 if rest_mask.any():
+                     df.loc[rest_mask, 'octave'] = REST_OCTAVE
         
         # Transpose chord roots (modulo 12)
         for col in ['chord_root', 'next_chord_root', 'key_center']:
@@ -543,11 +566,24 @@ class Preprocessor:
             Transposed chord symbol
         """
 
-        root_idx, quality_idx = ChordParser.parse_chord(chord_symbol).values()
+
+        parsed = ChordParser.parse_chord(chord_symbol)
+        if parsed is None:
+            return chord_symbol
+
+        root_idx = parsed['root']
+        quality_idx = parsed['quality']
+
         # Transpose root
         new_root = (root_idx + semitones) % 12
         
-        return NOTE_NAMES[new_root] + list(CHORD_QUALITY_MAP.values())[quality_idx][0]
+        # Reconstruct chord symbol
+        # We need to map quality index back to a string suffix.
+        # We'll use the first suffix in the list for that quality index.
+        quality_suffixes = list(CHORD_QUALITY_MAP.values())[quality_idx]
+        quality_suffix = quality_suffixes[0] if quality_suffixes else '' # Handle unknown/empty quality
+        
+        return NOTE_NAMES[new_root] + quality_suffix
 
     def _transpose_key_signature(self, key_signature: str, semitones: int) -> str:
         """
@@ -564,7 +600,13 @@ class Preprocessor:
             return key_signature
         
         # Find index of the key
-        note, quality = key_signature.split('-')
+        if '-' in key_signature:
+            note, quality = key_signature.split('-')
+            suffix = '-' + quality
+        else:
+            note = key_signature
+            suffix = '' # or default to something if needed, but likely just 'C' -> 'D'
+
         try:
             if note in NOTE_NAMES:
                 idx = NOTE_NAMES.index(note)
@@ -576,7 +618,7 @@ class Preprocessor:
             
             # Transpose and wrap around
             new_idx = (idx + semitones) % 12
-            return NOTE_NAMES[new_idx] + '-' + quality
+            return NOTE_NAMES[new_idx] + suffix
         except ValueError:
             # Should not happen if data is clean, but just in case
             return key_signature

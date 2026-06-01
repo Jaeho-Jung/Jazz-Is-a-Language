@@ -45,12 +45,22 @@ class ChordParser:
         
         chord_symbol = chord_symbol.strip()
         
+        # Handle slash chords (inversions) - strip bass note
+        if '/' in chord_symbol:
+            chord_symbol = chord_symbol.split('/')[0]
+        
         if len(chord_symbol) >= 2 and chord_symbol[1] in ['#', 'b']:
             root = chord_symbol[:2]
             quality = chord_symbol[2:]
         else:
             root = chord_symbol[:1]
             quality = chord_symbol[1:]
+            
+        # Handle basic triads or ambiguous chords (empty quality)
+        if quality == '':
+             # 'unknown' should be the last key in CHORD_QUALITY_MAP as per config
+             # We can find it dynamically or fallback 
+             pass # quality remains '' which matches 'unknown': [''] in config
         
         # Convert root to pitch class (initialize to 0 as default)
         root_idx = 0

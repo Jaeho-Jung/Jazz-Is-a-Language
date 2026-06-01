@@ -22,7 +22,13 @@ OUTPUT_CSV = 'data/wjd_bebop_preprocessed.csv'
 
 
 TARGET_MELODY_TYPE = 'SOLO'
-TARGET_STYLES = ['BEBOP', 'HARDBOP']
+# TARGET_STYLES now represents the styles to INCLUDE (initially)
+# The data loader will use this AND exclude specific styles/melids
+TARGET_STYLES = ['BEBOP', 'HARDBOP', 'COOL', 'SWING', 'TRADITIONAL', 'POSTBOP'] 
+
+EXCLUDED_STYLES = ['FUSION', 'FREE']
+EXCLUDED_MELIDS = [307]
+
 TARGET_SIGNATURE = '4/4'
 
 # ============================================================================
@@ -37,7 +43,7 @@ NOTE_NAMES_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 
 # ============================================================================
 
 GRID_PER_BEAT = 12  # 1 beat = 12 grid units (supports 16th notes and triplets)
-GRID_PER_BAR = 48   # 4/4 time signature: 4 beats * 12 = 48
+GRID_PER_BAR = 48   # 4/4 time signature: 4 beats * 12 = 48 
 
 # ============================================================================
 # CHORD QUALITY MAPPINGS
@@ -45,17 +51,29 @@ GRID_PER_BAR = 48   # 4/4 time signature: 4 beats * 12 = 48
 
 CHORD_QUALITY_MAP = {
     'Maj': ['j7', '6', '69'],
-    'min': ['-', '-7', '-6'],
-    'dom': ['7', '79b', '7913'],
+    'min': ['-', '-7', '-6', '-j7'],
+    'dom': ['7', '79b', '7913', 'sus7', '+7'],
     'half-dim': ['m7b5'],
+    'dim': ['o7', 'o'],
+    'unknown': [''], # For basic triads or ambiguous chords
 }
+
+# ============================================================================
+# DURATION LIMITS
+# ============================================================================
+
+MAX_NOTE_DURATION = 48   # 1 bar
+MAX_REST_DURATION = 96   # 2 bars
 
 # ============================================================================
 # REST ENCODING
 # ============================================================================
 
 # Special pitch value for rests (out of MIDI 0-127 range)
-REST_PITCH = -1
+REST_PITCH = 128
+
+# Special octave value for rests
+REST_OCTAVE = 0
 
 # Special chord-relative pitch for rests (out of 0-11 chromatic range)
 REST_CHORD_REL_PITCH = 12

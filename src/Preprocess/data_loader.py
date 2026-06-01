@@ -7,7 +7,7 @@ Handles SQLite database operations, data loading, and chord alignment.
 import sqlite3
 import pandas as pd
 from typing import List, Dict
-from .config import TARGET_MELODY_TYPE, TARGET_STYLES, TARGET_SIGNATURE, NOTE_NAMES
+from .config import TARGET_MELODY_TYPE, TARGET_STYLES, EXCLUDED_STYLES, EXCLUDED_MELIDS, TARGET_SIGNATURE, NOTE_NAMES
 
 class WJD:
     """Manager class for WJDDatabase"""
@@ -32,20 +32,35 @@ class WJD:
             List[int]: List of melids
         """
         conn = sqlite3.connect('data/wjazzd.db')
-        query = """
+        
+        # Build query dynamically
+        placeholders_styles = ','.join(['?'] * len(TARGET_STYLES))
+        placeholders_excluded_styles = ','.join(['?'] * len(EXCLUDED_STYLES))
+        placeholders_excluded_melids = ','.join(['?'] * len(EXCLUDED_MELIDS))
+        
+        query = f"""
                 SELECT DISTINCT m.melid
                 FROM melody_type m
                 JOIN solo_info s ON m.melid = s.melid
                 JOIN beats b ON m.melid = b.melid
                 WHERE m.type = ?
-                AND s.style IN (?, ?)
+                AND s.style IN ({placeholders_styles})
+                AND s.style NOT IN ({placeholders_excluded_styles})
+                AND m.melid NOT IN ({placeholders_excluded_melids})
                 AND b.signature = ?
                 ORDER BY m.melid
         """
+        
+        params = [TARGET_MELODY_TYPE] + \
+                 TARGET_STYLES + \
+                 EXCLUDED_STYLES + \
+                 EXCLUDED_MELIDS + \
+                 [TARGET_SIGNATURE]
+                 
         df = pd.read_sql_query(
             query, 
             conn,
-            params=(TARGET_MELODY_TYPE, TARGET_STYLES[0], TARGET_STYLES[1], TARGET_SIGNATURE)
+            params=params
         )
         conn.close()
 

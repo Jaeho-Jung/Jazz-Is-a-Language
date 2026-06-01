@@ -8,7 +8,7 @@ Uses absolute position (bar * GRID_PER_BAR + pos_grid) for accurate duration cal
 import pandas as pd
 from typing import Tuple
 
-from .config import GRID_PER_BAR, REST_CHORD_REL_PITCH
+from .config import GRID_PER_BAR, REST_CHORD_REL_PITCH, MAX_REST_DURATION
 
 
 class RestProcessor:
@@ -129,16 +129,7 @@ class RestProcessor:
     
     def _split_single_rest(self, pos_grid: int, dur_grid: int, bar: int) -> list:
         """
-        Split a single rest into beat-aligned 12-tick segments.
-        
-        Algorithm:
-        1. Fill to next beat boundary (pos % 12 == 0)
-        2. Add full 12-tick beats
-        3. Add remaining partial beat
-        
-        Examples:
-        - Rest(pos=6, dur=30) → [(6,6), (12,12), (24,12)]
-        - Rest(pos=42, dur=48) → [(42,6,bar), (0,12,bar+1), (12,12), (24,12), (36,6)]
+        Split a single rest into chunks of MAX_REST_DURATION.
         
         Args:
             pos_grid: Starting position in bar (0-47)
@@ -148,25 +139,14 @@ class RestProcessor:
         Returns:
             List of dicts with pos_grid, dur_grid, bar
         """
-        BEAT_GRIDS = 12  # One beat = 12 grids
-        
         segments = []
         remaining = dur_grid
         current_pos = pos_grid
         current_bar = bar
         
         while remaining > 0:
-            # Calculate distance to next beat boundary
-            if current_pos % BEAT_GRIDS == 0:
-                # Already at beat boundary, use full beat
-                dist_to_boundary = BEAT_GRIDS
-            else:
-                # Distance to next beat (12, 24, 36, 48)
-                next_beat = ((current_pos // BEAT_GRIDS) + 1) * BEAT_GRIDS
-                dist_to_boundary = next_beat - current_pos
-            
-            # Segment duration: min of distance to boundary, remaining, or 12
-            segment_dur = min(dist_to_boundary, remaining)
+            # Segment duration: min of remaining or MAX_REST_DURATION
+            segment_dur = min(remaining, MAX_REST_DURATION)
             
             segments.append({
                 'pos_grid': current_pos,
@@ -178,8 +158,9 @@ class RestProcessor:
             current_pos += segment_dur
             
             # Handle bar boundary (pos >= 48)
-            if current_pos >= GRID_PER_BAR:
-                current_pos = current_pos % GRID_PER_BAR
+            # Since segment_dur can be large (up to 96), we might jump multiple bars
+            while current_pos >= GRID_PER_BAR:
+                current_pos -= GRID_PER_BAR
                 current_bar += 1
         
         return segments
