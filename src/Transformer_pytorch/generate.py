@@ -64,8 +64,9 @@ def save_to_midi(melody, filename, bpm=120):
 def main():
     parser = argparse.ArgumentParser(description='Generate Jazz Solos with Transformer')
     parser.add_argument('--checkpoint', type=str, default='models/transformer/best_model.pth', help='Path to model checkpoint')
-    parser.add_argument('--temp', type=float, default=1.0, help='Sampling temperature')
-    parser.add_argument('--output', type=str, default='output/midi/transformer_solo.mid', help='Output MIDI filename')
+    parser.add_argument('--temp', type=float, default=0.8, help='Sampling temperature')
+    parser.add_argument('--top_k', type=int, default=10, help='Top-k sampling (None = disabled)')
+    parser.add_argument('--output', type=str, default='output/midi/generated_solo_Transformer.mid', help='Output MIDI filename')
     parser.add_argument('--bpm', type=int, default=120, help='BPM for MIDI file')
     args = parser.parse_args()
 
@@ -95,28 +96,114 @@ def main():
     # 4. Initialize Generator
     generator = JazzGenerator(model, dataset)
     
-    # 5. Define Chord Progression (F Bebop Blues, 12 bars)
+    # 5. Define Chord Progression
+    # Autumn Leaves
+    progression = [
+        (0, 1, 48),  # Cm7
+        (5, 2, 48),  # F7
+        (10,0, 48),  # Bbj7
+        (3, 0, 48),  # Ebj7
+        (9, 3, 48),  # Am7b5
+        (2, 2, 48),  # D7
+        (7, 1, 48),  # Gm7
+        (7, 1, 48),  # Gm7
+
+        (0, 1, 48),  # Cm7
+        (5, 2, 48),  # F7
+        (10,0, 48),  # Bbj7
+        (3, 0, 48),  # Ebj7
+        (9, 3, 48),  # Am7b5
+        (2, 2, 48),  # D7
+        (7, 1, 48),  # Gm7
+        (7, 1, 48),  # Gm7
+
+        (9, 3, 48),  # Am7b5
+        (2, 2, 48),  # D7
+        (7, 1, 48),  # Gm7
+        (7, 1, 48),  # Gm7
+        (0, 1, 48),  # Cm7
+        (5, 2, 48),  # F7
+        (10,0, 48),  # Bbj7
+        (3, 0, 48),  # Ebj7
+
+        (9, 3, 48),  # Am7b5
+        (2, 2, 48),  # D7
+        (7, 1, 24),  # Gm7
+        (0, 2, 24),  # C7
+        (5, 1, 24),  # Fm7
+        (10,2, 24),  # Bb7
+        (3, 0, 48),  # Ebj7
+        (9, 3, 24),  # Am7b5
+        (2, 2, 24),  # D7
+
+        (7, 1, 48),  # Gm7
+        (7, 1, 48),  # Gm7
+    ]
+    """
+    # There will never be another you
+    progression = [
+        (3, 0, 48),  # Ebj7
+        (3, 0, 48),  # Ebj7
+        (2, 3, 48),  # Dm7b5
+        (7, 2, 48),  # G7
+        (0, 1, 48),  # Cm7
+        (0, 1, 48),  # Cm7
+        (10,1, 48),  # Bbm7
+        (3, 2, 48),  # Eb7
+
+        (8, 0, 48),  # Abj7
+        (1, 2, 48),  # Db7
+        (3, 0, 48),  # Ebj7
+        (0, 1, 48),  # Cm7
+        (5, 2, 48),  # F7
+        (5, 2, 48),  # F7
+        (5, 1, 48),  # Fm7
+        (10,2, 48),  # Bb7
+
+        (3, 0, 48),  # Ebj7
+        (3, 0, 48),  # Ebj7
+        (2, 3, 48),  # Dm7b5
+        (7, 2, 48),  # G7
+        (0, 1, 48),  # Cm7
+        (0, 1, 48),  # Cm7
+        (10,1, 48),  # Bbm7
+        (3, 2, 48),  # Eb7
+        
+        (8, 0, 48),  # Abj7
+        (1, 2, 48),  # Db7
+        (3, 0, 48),  # Ebj7
+        (8, 3, 24),  # Am7b5
+        (2, 2, 24),  # D7
+        (3, 0, 24),  # Ebj7
+        (8, 2, 24),  # Ab7
+        (7, 1, 24),  # Gm7
+        (0, 2, 24),  # C7
+        (5, 1, 24),  # Fm7
+        (10,2, 24),  # Bb7
+        (3, 0, 24),  # Ebj7
+        (10,2, 24),  # Bb7
+    ]
+    # F Blues
     progression = [
         (5, 2, 48),  # F7
-        (10, 2, 48), # Bb7
+        (10,2, 48),  # Bb7
         (5, 2, 48),  # F7
-        (0, 1, 24),  # C-7
-        (5, 2, 24),  # F7
-        (10, 2, 48), # Bb7
-        (10, 2, 48), # Bb7
         (5, 2, 48),  # F7
-        (8, 1, 24),  # A-7
+        (10,2, 48),  # Bb7
+        (10,2, 48),  # Bb7
+        (5, 2, 48),  # F7
+        (9, 1, 24),  # Am7
         (2, 2, 24),  # D7
-        (7, 1, 48),  # G-7
+        (7, 1, 48),  # Gm7
         (0, 2, 48),  # C7
         (5, 2, 24),  # F7
-        (2, 2, 24),  # D7
-        (7, 1, 24),  # G-7
+        (2, 1, 24),  # Dm7
+        (7, 1, 24),  # Gm7
         (0, 2, 24),  # C7
     ]
-    
-    print(f"\nGenerating solo for F Blues (temp={args.temp})...")
-    melody = generator.generate(progression, temperature=args.temp)
+    """
+    print(f"\nGenerating solo...")
+    melody = generator.generate(progression, temperature=args.temp, top_k=args.top_k)
     
     print(f"Generated {len(melody)} events")
     save_to_midi(melody, args.output, args.bpm)

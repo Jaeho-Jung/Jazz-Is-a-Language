@@ -66,7 +66,6 @@ def main():
     # Determine start epoch if resuming
     start_epoch = 0
     if args.resume:
-        # Try to parse epoch from filename (e.g., encoder_decoder_14.pth)
         match = re.search(r'transformer_epoch_(\d+)\.pth', args.resume)
         if match:
             start_epoch = int(match.group(1))

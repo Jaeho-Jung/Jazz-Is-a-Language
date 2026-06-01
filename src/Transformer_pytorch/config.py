@@ -5,20 +5,21 @@ Configuration for Transformer Jazz Solo Generator
 # ============================================================================
 # DATA PATHS
 # ============================================================================
-DATA_PATH = 'data/wjd_bebop_preprocessed.pkl'
+DATA_PATH = 'data/wjd_jazz_preprocessed.pkl'
 
 # ============================================================================
 # TRANSFORMER HYPERPARAMETERS
 # ============================================================================
-BATCH_SIZE = 256
-D_MODEL = 192               # Model dimension (must be divisible by N_HEADS)
-N_HEADS = 6                 # Number of attention heads
-NUM_LAYERS = 4              # Number of encoder layers
-DROPOUT = 0.3               # Stronger regularization to delay overfitting
-SEQ_LEN = 32
+BATCH_SIZE = 512
+D_MODEL = 128               # Model dimension (must be divisible by N_HEADS)
+N_HEADS = 4                 # Number of attention heads
+NUM_LAYERS = 3              # Number of encoder layers
+DROPOUT = 0.3               # Increased from 0.2 for stronger regularization
+SEQ_LEN = 64
 LEARNING_RATE = 1e-4
-NUM_EPOCHS = 30
-WEIGHT_DECAY = 0.05     # Increased from 0.01
+NUM_EPOCHS = 15
+WARMUP_EPOCHS = 5           # For Cosine Annealing scheduler
+WEIGHT_DECAY = 0.05     
 LABEL_SMOOTHING = 0.1   # Softens targets to prevent overconfident predictions
 
 # ============================================================================

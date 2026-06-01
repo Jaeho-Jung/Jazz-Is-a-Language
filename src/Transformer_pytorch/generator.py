@@ -1,7 +1,9 @@
 """
 Generator for JazzTransformer (Decoder-Only) model.
 
-Simplified 7-feature version: pitch, rel_pitch, duration, prev_interval, 
+Supports top-k sampling for better generation quality.
+
+Features: pitch, rel_pitch, duration, prev_interval, 
 chord_root, chord_quality, metric_pos
 """
 
@@ -17,13 +19,14 @@ class JazzGenerator:
         self.dataset = dataset
         self.model.eval()
         
-    def generate(self, chord_progression, temperature=1.0):
+    def generate(self, chord_progression, temperature=1.0, top_k=10):
         """
         Autoregressive generation given a chord progression.
         
         Args:
             chord_progression: List of (root, quality, duration_grid).
-            temperature: Sampling temperature.
+            temperature: Sampling temperature (lower = more focused).
+            top_k: Only sample from top-k most likely tokens. None = no filtering.
         Returns:
             List of (pitch, duration, start_pos_abs)
         """
@@ -73,12 +76,13 @@ class JazzGenerator:
             with torch.no_grad():
                 pitch_logits, dur_logits, _ = self.model(features, None)
                 
-            # Sample with temperature
-            pitch_probs = torch.softmax(pitch_logits / temperature, dim=-1)
-            dur_probs = torch.softmax(dur_logits / temperature, dim=-1)
-            
-            next_pitch = torch.multinomial(pitch_probs, 1).item()
-            next_dur_idx = torch.multinomial(dur_probs, 1).item()
+            # Take LAST position's logits (GPT-style: position T-1 predicts token T)
+            pitch_logits = pitch_logits[:, -1, :]  # (1, vocab)
+            dur_logits = dur_logits[:, -1, :]      # (1, vocab)
+                
+            # Sample with temperature + top-k
+            next_pitch = self._sample(pitch_logits, temperature, top_k)
+            next_dur_idx = self._sample(dur_logits, temperature, top_k)
             
             # Decode duration
             next_dur_val = self.dataset.idx_to_dur.get(next_dur_idx, 12)
@@ -119,6 +123,18 @@ class JazzGenerator:
             history['prev_interval'].append(interval_idx)
             
         return generated_events
+
+    def _sample(self, logits, temperature=1.0, top_k=None):
+        """Sample from logits with temperature and optional top-k filtering."""
+        logits = logits / temperature
+        
+        if top_k is not None:
+            # Zero out everything outside top-k
+            v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+            logits[logits < v[:, [-1]]] = float('-inf')
+        
+        probs = torch.softmax(logits, dim=-1)
+        return torch.multinomial(probs, 1).item()
 
     def _get_chord_at_pos(self, abs_pos, timeline):
         """Get chord root and quality at given position."""

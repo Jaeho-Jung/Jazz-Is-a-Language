@@ -1,7 +1,7 @@
 """
 Dataset for JazzTransformer (Decoder-Only) model.
 
-Returns unified 7-feature format matching RNN/LSTM interface.
+GPT-style: returns (input[0:T], target[1:T+1]) for all-position prediction.
 All data is preloaded into memory as numpy arrays for fast GPU training.
 """
 
@@ -33,7 +33,6 @@ class JazzDataset(Dataset):
         """Precompute all features as numpy arrays — eliminates DataFrame overhead in __getitem__."""
         grouped = self.df.groupby('melid')
         
-        # Collect all sequences as indices into flat arrays
         all_pitch = []
         all_rel_pitch = []
         all_dur = []
@@ -42,7 +41,7 @@ class JazzDataset(Dataset):
         all_chord_quality = []
         all_metric_pos = []
         
-        sequences = []  # (offset_in_flat, length) for each solo
+        sequences = []
         flat_offset = 0
         
         for melid, group in grouped:
@@ -52,6 +51,7 @@ class JazzDataset(Dataset):
             group = group.reset_index(drop=True)
             n = len(group)
             
+            # Need seq_len + 1 events minimum (seq_len input + 1 for targets)
             if n <= self.seq_len:
                 continue
             
@@ -72,7 +72,6 @@ class JazzDataset(Dataset):
             all_chord_quality.append(chord_quality)
             all_metric_pos.append(metric_pos)
             
-            # Record sequence indices
             for start_idx in range(n - self.seq_len):
                 sequences.append((flat_offset + start_idx,))
             
@@ -87,10 +86,8 @@ class JazzDataset(Dataset):
         self.chord_quality = np.concatenate(all_chord_quality)
         self.metric_pos = np.concatenate(all_metric_pos)
         
-        # Store sequence start indices as numpy array
         self.seq_starts = np.array([s[0] for s in sequences], dtype=np.int64)
         
-        # Free the DataFrame — no longer needed
         del self.df
         
         print(f"Precomputed {len(self.seq_starts)} sequences from {len(all_pitch)} solos "
@@ -103,7 +100,6 @@ class JazzDataset(Dataset):
         start = self.seq_starts[idx]
         end = start + self.seq_len
         
-        # Slice precomputed arrays (fast numpy indexing, no DataFrame overhead)
         features = {
             'pitch': torch.from_numpy(self.pitch[start:end]),
             'rel_pitch': torch.from_numpy(self.rel_pitch[start:end]),
@@ -115,8 +111,8 @@ class JazzDataset(Dataset):
         }
 
         targets = {
-            'pitch': torch.tensor(self.pitch[end], dtype=torch.long),
-            'duration': torch.tensor(self.dur[end], dtype=torch.long),
+            'pitch': torch.from_numpy(self.pitch[start+1:end+1]),
+            'duration': torch.from_numpy(self.dur[start+1:end+1]),
         }
 
         return features, targets

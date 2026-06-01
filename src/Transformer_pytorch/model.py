@@ -215,15 +215,16 @@ class JazzTransformer(nn.Module):
 
     def forward(self, features, targets=None):
         """
-        Forward pass.
+        GPT-style forward pass: predict next token at EVERY position.
         
         Args:
             features: dict with 7 feature tensors, each (batch, seq_len)
-            targets: optional dict with 'pitch' and 'duration' tensors (batch,)
+            targets: optional dict with 'pitch' and 'duration' tensors,
+                     each (batch, seq_len) — shifted targets for all positions
             
         Returns:
-            pitch_logits: (batch, 129)
-            dur_logits: (batch, num_dur_classes)
+            pitch_logits: (batch, seq_len, 129)
+            dur_logits: (batch, seq_len, num_dur_classes)
             loss: scalar if targets provided, else None
         """
         device = features['pitch'].device
@@ -253,17 +254,24 @@ class JazzTransformer(nn.Module):
         
         x = self.ln_f(x)
         
-        # Take last timestep for next-token prediction
-        last_hidden = x[:, -1, :]  # (batch, d_model)
+        # Predict at ALL positions (GPT-style)
+        pitch_logits = self.pitch_head(x)   # (B, T, 129)
+        dur_logits = self.dur_head(x)       # (B, T, num_dur_classes)
         
-        pitch_logits = self.pitch_head(last_hidden)
-        dur_logits = self.dur_head(last_hidden)
-        
-        # Compute loss if targets provided
+        # Compute loss across all positions if targets provided
         loss = None
         if targets is not None:
-            loss_pitch = F.cross_entropy(pitch_logits, targets['pitch'], label_smoothing=config.LABEL_SMOOTHING)
-            loss_dur = F.cross_entropy(dur_logits, targets['duration'], label_smoothing=config.LABEL_SMOOTHING)
+            # Reshape: (B, T, vocab) -> (B*T, vocab), targets: (B, T) -> (B*T,)
+            loss_pitch = F.cross_entropy(
+                pitch_logits.view(-1, pitch_logits.size(-1)),
+                targets['pitch'].view(-1),
+                label_smoothing=config.LABEL_SMOOTHING
+            )
+            loss_dur = F.cross_entropy(
+                dur_logits.view(-1, dur_logits.size(-1)),
+                targets['duration'].view(-1),
+                label_smoothing=config.LABEL_SMOOTHING
+            )
             loss = loss_pitch + loss_dur
         
         return pitch_logits, dur_logits, loss

@@ -9,20 +9,27 @@ import torch.nn as nn
 from torch.cuda.amp import autocast, GradScaler
 import time
 import os
-from src.Transformer_pytorch.config import (
-    LEARNING_RATE, 
-    WEIGHT_DECAY, 
-    NUM_EPOCHS
-)
+import src.Transformer_pytorch.config as config
+
 
 
 class Trainer:
-    def __init__(self, model, train_loader, val_loader, learning_rate=LEARNING_RATE, weight_decay=WEIGHT_DECAY, num_epochs=NUM_EPOCHS, device=None):
+    def __init__(self, model, train_loader, val_loader, learning_rate=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY, num_epochs=config.NUM_EPOCHS, device=None):
         self.device = device if device else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = model.to(self.device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        
+        # Scheduler: Cosine Annealing with Warm Restarts
+        # T_0: Number of iterations for the first restart
+        # T_mult: A factor increases T_i after a restart
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.optimizer, 
+            T_0=10, 
+            T_mult=2, 
+            eta_min=1e-6
+        )
         self.num_epochs = num_epochs
         
         # Mixed precision scaler (only active on CUDA)
@@ -97,6 +104,18 @@ class Trainer:
                 if epochs_without_improvement >= patience:
                     print(f"Early stopping triggered at epoch {epoch+1}. Best val loss: {self.best_val_loss:.4f}")
                     break
+            
+            # Learning Rate Scheduling
+            if epoch < config.WARMUP_EPOCHS:
+                # Linear Warmup
+                lr = config.LEARNING_RATE * (epoch + 1) / config.WARMUP_EPOCHS
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = lr
+                print(f"Warmup Epoch [{epoch+1}/{config.WARMUP_EPOCHS}], Learning Rate: {lr:.6f}")
+            else:
+                # Cosine Annealing (starts after warmup)
+                self.scheduler.step(epoch - config.WARMUP_EPOCHS)
+                print(f"Cosine Decay, Learning Rate: {self.optimizer.param_groups[0]['lr']:.6f}")
 
     def _move_to_device(self, feature_dict):
         """Move all tensors in a dict to device."""
