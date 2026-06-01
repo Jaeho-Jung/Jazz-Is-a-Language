@@ -10,7 +10,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
-from src.RNN_numpy.optimizer import SGD, SGDWithMomentum, AdaGrad, RMSProp, Adam, AdamW
+from src.LSTM_numpy.optimizer import SGD, SGDWithMomentum, AdaGrad, RMSProp, Adam, AdamW
 
 
 class SimpleModel:

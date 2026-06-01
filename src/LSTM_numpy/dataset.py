@@ -81,8 +81,6 @@ class JazzDataset(Dataset):
 
         return features, torch.scalar_tensor(target_pitch, dtype=torch.long), torch.scalar_tensor(target_duration, dtype=torch.long)
 
-    def _process_pitch(self, pitch_series):
-        return pitch_series.fillna(128).astype(int).values
 
 # if __name__ == "__main__":
 #     dataset = JazzDataset()
