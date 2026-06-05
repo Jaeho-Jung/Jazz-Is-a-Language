@@ -9,11 +9,11 @@ from typing import Optional
 from src.Transformer_numpy.utils import gelu, gelu_derivative
 from src.Transformer_numpy.layers.linear import Linear
 from src.Transformer_numpy.layers.dropout import Dropout
-from src.Transformer_numpy.config import config
+from src.Transformer_numpy import config
 
 class FeedForward:
     """
-    Position-wise FFN: Linear -> GELU -> Linear
+    Position-wise FFN: Linear -> GELU -> Dropout -> Linear
     """
 
     def __init__(self, embed_dim: int, dropout_rate: float = config.DROPOUT_RATE):
@@ -27,14 +27,14 @@ class FeedForward:
         x = self.fc1.forward(x)
         self._pre_act = x
         x = gelu(x)
-        x = self.fc2.forward(x)
         x = self.dropout.forward(x)
+        x = self.fc2.forward(x)
         return x
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
         grad = self.fc2.backward(grad)
-        grad = grad * gelu_derivative(self._pre_act)
         grad = self.dropout.backward(grad)
+        grad = grad * gelu_derivative(self._pre_act)
         return self.fc1.backward(grad)
 
     def get_params(self):
