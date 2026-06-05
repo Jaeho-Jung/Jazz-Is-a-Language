@@ -45,18 +45,23 @@ class Linear:
     def backward(self, grad_output: np.ndarray) -> np.ndarray:
         """
         Backward pass through the linear layer.
-        
+        Supports both 2D (N, out) and 3D (B, T, out) inputs.
+
         Args:
-            grad_output: Gradient from next layer, shape (batch_size, output_features)
-        
+            grad_output: Gradient from next layer, shape (..., output_features)
+
         Returns:
-            grad_x: Gradient w.r.t. input, shape (batch_size, input_features)
+            grad_x: Gradient w.r.t. input, shape (..., input_features)
         """
-        grad_x = grad_output @ self.W
-        self.grad_W = grad_output.T @ self._x
-        self.grad_b = np.sum(grad_output, axis=0)
-        
-        return grad_x
+        # Flatten batch dims so .T works correctly for grad_W/grad_b
+        flat_g = grad_output.reshape(-1, self.output_features)
+        flat_x = self._x.reshape(-1, self.input_features)
+
+        self.grad_W = flat_g.T @ flat_x          # (out, in)
+        self.grad_b = flat_g.sum(axis=0)          # (out,)
+
+        # @ broadcasts over leading dims — works for 2D and 3D
+        return grad_output @ self.W
 
     def get_params(self):
         """Return parameters for optimizer."""
