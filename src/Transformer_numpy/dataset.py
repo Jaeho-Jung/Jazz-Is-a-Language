@@ -4,48 +4,30 @@ import pandas as pd
 import numpy as np
 from src.Transformer_numpy.config import DATA_PATH, SEQ_LEN
 
-"""
-relative_pitch: 0-12 (0-11: note, 12: rest)
-octave: 3-6
-pos: 0-47
-chord_root: 0-11
-chord_quality: 0-6
-"""
 
 class JazzDataset(Dataset):
     """
-    Dataset for solo jazz events.
-    
-    Args:
-        seq_len: Sequence length for input window
-        data_path: Path to dataset pickle file
+    Dataset for JazzTransformer (NumPy, GPT-style).
+    Mirrors Transformer_pytorch/dataset.py: 7 features, shifted targets.
     """
+
     def __init__(self, seq_len=SEQ_LEN, data_path=DATA_PATH, melids=None):
         self.seq_len = seq_len
         self.df = pd.read_pickle(data_path)
 
-        self.melids = melids
+        unique_durations = sorted(self.df['dur_grid'].dropna().unique().astype(int))
+        self.dur_to_idx = {dur: idx for idx, dur in enumerate(unique_durations)}
+        self.idx_to_dur = {idx: dur for idx, dur in enumerate(unique_durations)}
+        self.vocab_size_duration = len(unique_durations)
 
-        # prepare sequences
-        self.seq_starts = []
+        self.melids = melids
         self._precompute()
 
     def _precompute(self):
-        """
-        Precompute all data as numpy arrays for fast GPU training.
-        """
         grouped = self.df.groupby('melid')
-        
-        all_pitch = []
-        all_rel_pitch = []
-        all_dur = []
-        all_pos = []
-        all_chord_root = []
-        all_chord_root_rel = []
-        all_chord_quality = []
-        all_next_chord_root = []
-        all_next_chord_root_rel = []
-        all_next_chord_quality = []
+
+        all_pitch, all_rel_pitch, all_dur = [], [], []
+        all_prev_int, all_chord_root, all_chord_quality, all_metric_pos = [], [], [], []
 
         sequences = []
         flat_offset = 0
@@ -55,49 +37,39 @@ class JazzDataset(Dataset):
                 continue
 
             group = group.reset_index(drop=True)
-            len_group = len(group)
+            n = len(group)
 
-            if len_group <= self.seq_len:
+            if n <= self.seq_len:
                 continue
 
-            pitch = group['pitch'].fillna(128).astype(int).values.copy()
-            rel_pitch = group['chord_rel_pitch'].fillna(12).astype(int).values.copy()
-            dur = group['dur_grid'].astype(int).values.copy()
-            pos = group['pos_grid'].astype(int).values.copy()
-            chord_root = group['chord_root'].fillna(12).astype(int).values.copy()
-            chord_root_rel = group['chord_root_rel'].fillna(12).astype(int).values.copy()
-            chord_quality = group['chord_quality'].fillna(6).astype(int).values.copy()
-            next_chord_root = group['next_chord_root'].fillna(12).astype(int).values.copy()
-            next_chord_root_rel = group['next_chord_root_rel'].fillna(12).astype(int).values.copy()
-            next_chord_quality = group['next_chord_quality'].fillna(6).astype(int).values.copy()
+            pitch       = group['pitch'].fillna(128).astype(np.int64).values.copy()
+            rel_pitch   = group['chord_rel_pitch'].fillna(12).astype(np.int64).values.copy()
+            dur         = group['dur_grid'].apply(lambda x: self.dur_to_idx.get(x, 0)).values.astype(np.int64).copy()
+            prev_int    = np.clip(group['prev_interval'].fillna(0).values + 12, 0, 24).astype(np.int64).copy()
+            chord_root  = group['chord_root'].fillna(12).astype(np.int64).values.copy()
+            chord_qual  = group['chord_quality'].fillna(6).astype(np.int64).values.copy()
+            metric_pos  = group['pos_grid'].fillna(0).astype(np.int64).values.copy()
 
             all_pitch.append(pitch)
             all_rel_pitch.append(rel_pitch)
             all_dur.append(dur)
-            all_pos.append(pos)
+            all_prev_int.append(prev_int)
             all_chord_root.append(chord_root)
-            all_chord_root_rel.append(chord_root_rel)
-            all_chord_quality.append(chord_quality)
-            all_next_chord_root.append(next_chord_root)
-            all_next_chord_root_rel.append(next_chord_root_rel)
-            all_next_chord_quality.append(next_chord_quality)
+            all_chord_quality.append(chord_qual)
+            all_metric_pos.append(metric_pos)
 
-            stride = self.seq_len // 2
-            for start_idx in range(0, len_group - self.seq_len, stride):
+            for start_idx in range(n - self.seq_len):
                 sequences.append((flat_offset + start_idx,))
 
-            flat_offset += len_group
+            flat_offset += n
 
-        self.pitch = np.concatenate(all_pitch)
-        self.rel_pitch = np.concatenate(all_rel_pitch)
-        self.dur = np.concatenate(all_dur)
-        self.pos = np.concatenate(all_pos)
-        self.chord_root = np.concatenate(all_chord_root)
-        self.chord_root_rel = np.concatenate(all_chord_root_rel)
+        self.pitch        = np.concatenate(all_pitch)
+        self.rel_pitch    = np.concatenate(all_rel_pitch)
+        self.dur          = np.concatenate(all_dur)
+        self.prev_int     = np.concatenate(all_prev_int)
+        self.chord_root   = np.concatenate(all_chord_root)
         self.chord_quality = np.concatenate(all_chord_quality)
-        self.next_chord_root = np.concatenate(all_next_chord_root)
-        self.next_chord_root_rel = np.concatenate(all_next_chord_root_rel)
-        self.next_chord_quality = np.concatenate(all_next_chord_quality)
+        self.metric_pos   = np.concatenate(all_metric_pos)
 
         self.seq_starts = np.array([s[0] for s in sequences], dtype=np.int64)
 
@@ -111,23 +83,20 @@ class JazzDataset(Dataset):
 
     def __getitem__(self, idx):
         start = self.seq_starts[idx]
-        end = start + self.seq_len
+        end   = start + self.seq_len
 
         features = {
-            'rel_pitch': torch.LongTensor(self.rel_pitch[start:end].copy()),
-            'dur': torch.LongTensor(self.dur[start:end].copy()),
-            'pos': torch.LongTensor(self.pos[start:end].copy()),
-            'chord_root': torch.LongTensor(self.chord_root[start:end].copy()),
-            'chord_root_rel': torch.LongTensor(self.chord_root_rel[start:end].copy()),
+            'pitch':         torch.LongTensor(self.pitch[start:end].copy()),
+            'rel_pitch':     torch.LongTensor(self.rel_pitch[start:end].copy()),
+            'duration':      torch.LongTensor(self.dur[start:end].copy()),
+            'prev_interval': torch.LongTensor(self.prev_int[start:end].copy()),
+            'chord_root':    torch.LongTensor(self.chord_root[start:end].copy()),
             'chord_quality': torch.LongTensor(self.chord_quality[start:end].copy()),
-            'next_chord_root': torch.LongTensor(self.next_chord_root[start:end].copy()),
-            'next_chord_root_rel': torch.LongTensor(self.next_chord_root_rel[start:end].copy()),
-            'next_chord_quality': torch.LongTensor(self.next_chord_quality[start:end].copy()),
+            'metric_pos':    torch.LongTensor(self.metric_pos[start:end].copy()),
         }
 
-        # Targets
         targets = {
-            'pitch': torch.LongTensor(self.pitch[start+1:end+1].copy()),
+            'pitch':    torch.LongTensor(self.pitch[start+1:end+1].copy()),
             'duration': torch.LongTensor(self.dur[start+1:end+1].copy()),
         }
 
