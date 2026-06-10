@@ -13,6 +13,8 @@ ADAM_BETA1 = 0.9
 ADAM_BETA2 = 0.999
 EPSILON = 1e-8
 WEIGHT_DECAY = 0.05
+MOMENTUM = 0.9
+RMSPROP_DECAY = 0.99
 
 # Architecture (match Transformer_pytorch)
 TRANSFORMER_HIDDEN_SIZE = 128   # = D_MODEL
