@@ -178,10 +178,8 @@ def test_lstm_cell_gradient_check():
     
     print(f"  Max relative error (grad_x_t): {max_error:.2e}")
     
-    if max_error < 1e-4:
-        print("✓ Gradient check passed!")
-    else:
-        print(f"⚠ Gradient check warning: max error = {max_error:.2e}")
+    assert max_error < 1e-4, f"Gradient check failed: max relative error = {max_error:.2e}"
+    print("✓ Gradient check passed!")
 
 
 def test_lstm_gates():
